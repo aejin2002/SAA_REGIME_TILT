@@ -149,7 +149,9 @@ def try_fetch_fred_realtime_yoy(series_id, start, end, api_key, tries=6):
         obs_start = (pd.Timestamp(start) - pd.DateOffset(years=1)).strftime("%Y-%m-%d")
         params = {
             "series_id": series_id, "api_key": api_key, "file_type": "json",
-            "output_type": 2, "realtime_start": "1776-07-04", "realtime_end": end,
+            # realtime_end는 FRED 서버 날짜(미국 시간) 이후면 400 에러 -> 한국 날짜로 넘기면 폴백돼버림.
+            # 9999-12-31은 "현재까지 모든 발표본"이라 결과는 같고 시차 문제가 없음.
+            "output_type": 2, "realtime_start": "1776-07-04", "realtime_end": "9999-12-31",
             "observation_start": obs_start, "observation_end": end,
         }
         for k in range(tries):                      # FRED 일시적 5xx 대비 재시도
