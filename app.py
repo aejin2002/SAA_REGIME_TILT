@@ -131,12 +131,6 @@ def load_market_data():
     return strat.fetch_market_data(VKOSPI_PATH)
 
 
-@st.cache_data(ttl=24 * 3600, show_spinner=False)
-def load_sensitivity(wf_alloc_log, px, daily_rets, vix_d, vix_ma20):
-    gmw = lambda m: strat.month_weights_from_log(wf_alloc_log, m)  # noqa: E731
-    return strat.run_sensitivity_grid(px, daily_rets, vix_d, vix_ma20, gmw)
-
-
 with st.sidebar:
     st.markdown("### 📈 레짐 틸트 대시보드")
     st.caption("성장×인플레이션 레짐 틸트 + 위기오버레이 + 간단 F&G")
@@ -546,18 +540,6 @@ for tab, r in zip(tabs, ["Goldilocks", "Reflation", "Stagflation", "Deflation"])
             st.dataframe(alloc, use_container_width=True, hide_index=True)
 
 # ------------------------------------------------------------------
-# IS/OOS (전체 기간 고정)
-# ------------------------------------------------------------------
-st.markdown('<div class="section-title">IS / OOS 비교 (7:3 분할, 전체 기간 기준)</div>', unsafe_allow_html=True)
-is_oos = bt["is_oos_table"].copy()
-for col in ["CAGR", "연변동성", "MDD", "총수익"]:
-    is_oos[col] = (is_oos[col] * 100).map(lambda v: f"{v:.1f}%")
-is_oos["Sharpe"] = is_oos["Sharpe"].astype(float).round(2)
-st.dataframe(is_oos.reset_index(), use_container_width=True, hide_index=True)
-for lab, (a, b) in bt["is_oos_periods"].items():
-    st.caption(f"{lab}: {a.date()} ~ {b.date()}")
-
-# ------------------------------------------------------------------
 # 레짐별 자산 성과 (상세)
 # ------------------------------------------------------------------
 with st.expander("레짐별 자산 성과 상세 보기"):
@@ -570,29 +552,6 @@ with st.expander("레짐별 자산 성과 상세 보기"):
     stats["레짐"] = stats["레짐"].map(lambda r: strat.REGIME_LABELS_KO.get(r, r))
     pick = st.selectbox("레짐 선택", list(strat.REGIME_LABELS_KO.values()))
     st.dataframe(stats[stats["레짐"] == pick].drop(columns=["레짐"]), use_container_width=True, hide_index=True)
-
-# ------------------------------------------------------------------
-# 파라미터 민감도
-# ------------------------------------------------------------------
-with st.expander("위기 오버레이 파라미터 민감도 (81개 조합, 거래비용 미반영)"):
-    st.caption("VIX 레벨/급등폭, SPY·HYG 5일 하락폭을 그리드로 흔들어 결과가 특정 파라미터에 '운 좋게' 맞춰진 건 아닌지 확인")
-    if st.button("민감도 분석 실행"):
-        with st.spinner("81개 조합을 재계산하는 중..."):
-            grid_df = load_sensitivity(bt["wf_alloc_log"], bt["px"], bt["daily_rets"],
-                                        bt["vix_d"], bt["vix_d"].rolling(20).mean())
-        st.write(
-            f"Sharpe 분포: min {grid_df['Sharpe'].min():.2f} · 중앙값 {grid_df['Sharpe'].median():.2f} · "
-            f"max {grid_df['Sharpe'].max():.2f}")
-        fig_g = go.Figure(go.Histogram(x=grid_df["Sharpe"], nbinsx=20, marker_color=NAVY_SOFT))
-        base = grid_df[(grid_df["VIX레벨"] == 30) & (grid_df["VIX급등"] == 0.50) &
-                        (grid_df["SPY5일"] == -0.07) & (grid_df["HYG5일"] == -0.03)]
-        if len(base):
-            fig_g.add_vline(x=base["Sharpe"].iloc[0], line_color=C_RED, line_width=2,
-                             annotation_text="원래 조합", annotation_position="top")
-        fig_g.update_layout(height=320, margin=dict(l=10, r=10, t=20, b=10),
-                             plot_bgcolor=WHITE, paper_bgcolor=WHITE,
-                             font=dict(color=NAVY), xaxis_title="Sharpe", yaxis_title="조합 수")
-        st.plotly_chart(fig_g, use_container_width=True)
 
 # ------------------------------------------------------------------
 # 신호 검증 / 레짐 라벨 분포

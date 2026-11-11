@@ -63,12 +63,13 @@ IND = {
         unit="pt", change_unit="pt", assets=[],
         rising="50을 넘으면 제조업 확장 국면. 추가 상승은 신규주문·생산 가속을 의미.",
         falling="50을 밑돌면 제조업 수축 국면. 추가 하락은 경기 둔화 심화를 의미.",
-        data_note="ISM이 2016년 이후 FRED 등 공공 API에 실시간 재배포를 허용하지 않아 무료로 받을 수 있는 경로가 없음."),
+        data_note="ISM이 과거 시계열 재배포를 막아둔 데다, 이번 달 보도자료 페이지조차 reCAPTCHA로 "
+                   "봇 접근을 차단하고 있어(확인됨) 자동 수집이 불가능함. 발표 당일 ismworld.org에서 직접 확인 필요."),
     "ISM_SVC": dict(label="ISM 서비스업 PMI", axis="growth", fred=None, freq="M", transform="level",
         unit="pt", change_unit="pt", assets=[],
         rising="50을 넘으면 서비스업 확장. 미국 GDP의 70%+가 서비스업이라 이 지표의 가중치가 큼.",
         falling="50을 밑돌면 서비스업 수축. 제조업보다 서비스업 둔화가 실제 소비경기 둔화에 더 가까운 신호.",
-        data_note="ISM 제조업 PMI와 동일한 사유로 FRED 무료 API 미제공."),
+        data_note="ISM 제조업 PMI와 동일한 사유(reCAPTCHA 봇 차단 확인됨)로 자동 수집 불가."),
     "GDPNOW": dict(label="Atlanta Fed GDPNow (실시간 GDP 나우캐스트)", axis="growth", fred=None, freq="D", transform="gdpnow_level",
         unit="%", change_unit="pt", assets=[],
         rising="나우캐스트 상향은 들어오는 데이터들이 예상보다 강하다는 의미. 단, 분기 초반엔 데이터가 적어 변동성이 크고 분기 말로 갈수록 안정됨.",
@@ -427,6 +428,7 @@ EPS_BY_UNIT = {"bp": 3.0, "pt": 0.15, "pct": 0.3}
 
 def compute_indicator(ind_key, market_data, raw_cache):
     ind = IND[ind_key]
+
     series = _build_series(ind_key, ind, market_data, raw_cache)
     if series is None or len(series) < 3:
         return {"key": ind_key, **ind, "available": False}
