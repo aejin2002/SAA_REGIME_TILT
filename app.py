@@ -415,6 +415,118 @@ st.caption(f"60/40보다 나았던 해: {n_years_beat_6040}/{len(yearly_view)}�
            f"({'선택한 투자기간 기준' if not is_full_period else '전체 기간 기준'})")
 
 # ------------------------------------------------------------------
+# 기간 분석 — 특정 구간에서 뭐가 이득/마이너스였고, 오버레이가 도움이 됐는지
+# ------------------------------------------------------------------
+st.markdown('<div class="section-title">기간 분석</div>', unsafe_allow_html=True)
+st.caption("시작일~종료일을 지정하면 그 구간에서 어떤 자산이 수익에 기여/손해를 줬는지, "
+           "위기오버레이·F&G가 그 구간에서 도움이 됐는지, 최악의 낙폭 구간에서 뭐가 문제였는지 보여줍니다.")
+
+pa_default_end = full_end
+pa_default_start = max(full_start, (pd.Timestamp(pa_default_end) - pd.DateOffset(years=1)).date())
+pac1, pac2 = st.columns(2)
+with pac1:
+    period_start = st.date_input("분석 시작일", value=pa_default_start, min_value=full_start, max_value=full_end, key="pa_start")
+with pac2:
+    period_end = st.date_input("분석 종료일", value=pa_default_end, min_value=full_start, max_value=full_end, key="pa_end")
+
+if period_start >= period_end:
+    st.warning("시작일이 종료일보다 빠르거나 같아야 합니다.")
+else:
+    p_start_ts, p_end_ts = pd.Timestamp(period_start), pd.Timestamp(period_end)
+
+    def pslice(rets):
+        return rets.loc[(rets.index >= p_start_ts) & (rets.index <= p_end_ts)]
+
+    pa_final = pslice(bt["fg_rets"])
+    pa_overlay = pslice(bt["overlay_rets"])
+    pa_regime_only = pslice(bt["regime_only_rets"])
+    pa_6040 = pslice(bt["bench_daily_6040"])
+    pa_spy = pslice(bt["daily_rets"]["SPY"])
+
+    if len(pa_final) < 3:
+        st.warning("선택한 구간에 데이터가 너무 적습니다.")
+    else:
+        tot_final = (1 + pa_final).prod() - 1
+        tot_overlay = (1 + pa_overlay).prod() - 1
+        tot_regime_only = (1 + pa_regime_only).prod() - 1
+        tot_6040 = (1 + pa_6040).prod() - 1
+        tot_spy = (1 + pa_spy).prod() - 1
+
+        pm1, pm2, pm3, pm4 = st.columns(4)
+        for col, label, val in zip(
+            (pm1, pm2, pm3, pm4),
+            ("최종전략 총수익", "60/40 총수익", "SPY 총수익", "레짐만(오버레이 없음)"),
+            (tot_final, tot_6040, tot_spy, tot_regime_only),
+        ):
+            with col:
+                st.markdown(f"""<div class="card">
+                    <div class="card-label">{label}</div>
+                    <div class="card-value">{fmt_pct(val)}</div>
+                </div>""", unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # 자산별 기여도 — 뭐가 이득, 뭐가 마이너스
+        st.markdown("**자산별 수익 기여도** (선형 근사 — 턴오버·오버레이 전환 포함, 컴파운딩은 무시)")
+        contrib = strat.asset_contributions(bt["fg_weights"], bt["daily_rets"], p_start_ts, p_end_ts) * 100
+        contrib = contrib[contrib.abs() > 0.001].sort_values()
+        contrib_labels = [strat.ASSET_LABELS.get(a, a) for a in contrib.index]
+        contrib_colors = [C_EMERALD if v >= 0 else C_RED for v in contrib.values]
+        c_min, c_max = contrib.min(), contrib.max()
+        c_pad = max((c_max - c_min) * 0.18, 0.5)
+        fig_contrib = go.Figure(go.Bar(
+            x=contrib.values, y=contrib_labels, orientation="h",
+            marker_color=contrib_colors, text=[f"{v:+.2f}%p" for v in contrib.values], textposition="outside",
+            cliponaxis=False,
+        ))
+        fig_contrib.update_layout(
+            height=320 + 18 * len(contrib), margin=dict(l=10, r=70, t=10, b=10),
+            xaxis_title="기여도 (%p, 선형 근사)", plot_bgcolor=WHITE, paper_bgcolor=WHITE,
+            font=dict(color=NAVY, family="system-ui, -apple-system, Segoe UI, sans-serif"),
+            xaxis=dict(gridcolor=BORDER, zeroline=True, zerolinecolor=MUTED,
+                       range=[c_min - c_pad, c_max + c_pad]),
+        )
+        st.plotly_chart(fig_contrib, use_container_width=True)
+
+        # 오버레이 효과
+        overlay_effect = tot_final - tot_regime_only
+        st.caption(
+            f"위기오버레이+F&G 효과: 레짐 배분만 했을 때 총수익 {fmt_pct(tot_regime_only)} 대비 "
+            f"실제 최종전략은 {fmt_pct(tot_final)} — **{'이 구간에선 오버레이가 도움이 됐습니다' if overlay_effect > 0 else '이 구간에선 오버레이가 오히려 발목을 잡았습니다'} "
+            f"({overlay_effect*100:+.1f}%p)**."
+        )
+
+        # 최악의 낙폭 구간
+        st.markdown("**이 구간 중 최악의 낙폭**")
+        dd_info = strat.worst_drawdown_window(pa_final)
+        recovery_txt = dd_info["recovery"].date().isoformat() if dd_info["recovery"] is not None else "아직 회복 전"
+        st.write(
+            f"{dd_info['peak'].date()} (고점) → {dd_info['trough'].date()} (저점, {dd_info['dd']*100:.1f}%) "
+            f"→ 회복: {recovery_txt}"
+        )
+        dd_contrib = strat.asset_contributions(bt["fg_weights"], bt["daily_rets"],
+                                                dd_info["peak"], dd_info["trough"]) * 100
+        dd_contrib = dd_contrib[dd_contrib.abs() > 0.001].sort_values().head(5)
+        if len(dd_contrib):
+            worst_asset = dd_contrib.index[0]
+            st.caption(
+                f"낙폭 구간({dd_info['peak'].date()}~{dd_info['trough'].date()}) 최대 손실 기여: "
+                + ", ".join(f"{strat.ASSET_LABELS.get(a, a)} {v:+.2f}%p" for a, v in dd_contrib.items())
+            )
+
+        # 요약
+        top_gain = contrib.sort_values(ascending=False).head(2)
+        top_loss = contrib.sort_values().head(2)
+        st.markdown(f"""
+<div class="footnote">
+<b>요약</b> — 이 구간({period_start} ~ {period_end}) 최종전략 총수익은 {fmt_pct(tot_final)}.
+가장 도움이 된 자산은 {', '.join(f"{strat.ASSET_LABELS.get(a, a)}({v:+.1f}%p)" for a, v in top_gain.items())},
+가장 발목을 잡은 자산은 {', '.join(f"{strat.ASSET_LABELS.get(a, a)}({v:+.1f}%p)" for a, v in top_loss.items())}.
+최악의 낙폭은 {dd_info['peak'].date()}~{dd_info['trough'].date()} 구간 {dd_info['dd']*100:.1f}%.
+</div>
+""", unsafe_allow_html=True)
+
+# ------------------------------------------------------------------
 # 레짐별 배분표
 # ------------------------------------------------------------------
 st.markdown('<div class="section-title">레짐별 고정 배분 비중</div>', unsafe_allow_html=True)

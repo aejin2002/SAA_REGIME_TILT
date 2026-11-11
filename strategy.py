@@ -354,6 +354,37 @@ def perf_stats(rets, periods_per_year=12):
 
 
 # ------------------------------------------------------------------
+# 기간 분석 (특정 구간에서 뭐가 이득/마이너스였는지, 오버레이가 도움이 됐는지)
+# ------------------------------------------------------------------
+def asset_contributions(weights_df, daily_rets, start=None, end=None):
+    """weights_df(시점x자산 실제 보유비중) × 그날 수익률을 더해 자산별 '수익 기여도'를 근사.
+    컴파운딩을 무시한 선형 근사치라 정확한 분해는 아니지만, 어떤 자산이 그 구간 수익에
+    플러스/마이너스로 기여했는지 순위를 매기는 용도로는 충분함 ("대충 분석")."""
+    w = weights_df
+    if start is not None:
+        w = w.loc[w.index >= pd.Timestamp(start)]
+    if end is not None:
+        w = w.loc[w.index <= pd.Timestamp(end)]
+    aligned = daily_rets.reindex(index=w.index, columns=w.columns).fillna(0.0)
+    contrib = (w * aligned).sum(axis=0)
+    return contrib.sort_values(ascending=False)
+
+
+def worst_drawdown_window(rets):
+    """rets 구간 안에서 가장 깊었던 낙폭의 고점/저점/회복일(없으면 None)과 낙폭(%)을 반환."""
+    cum = (1 + rets).cumprod()
+    roll_max = cum.cummax()
+    dd = cum / roll_max - 1
+    trough = dd.idxmin()
+    peak = cum.loc[:trough].idxmax()
+    peak_value = cum.loc[peak]
+    after = cum.loc[trough:]
+    recovered = after[after >= peak_value]
+    recovery = recovered.index[0] if len(recovered) else None
+    return {"peak": peak, "trough": trough, "recovery": recovery, "dd": dd.min()}
+
+
+# ------------------------------------------------------------------
 # 간단 F&G (규칙 A)
 # ------------------------------------------------------------------
 def sfg_pct252(s):
@@ -675,9 +706,17 @@ def build_backtest(data, one_way_cost_bps=DEFAULT_ONE_WAY_COST_BPS):
     fg_rets = (fg_gross - fg_cost).dropna()
     out["fg_rets"] = fg_rets
     out["fg_rets_gross"] = fg_gross.dropna()
+    out["fg_weights"] = fg_weights
     out["fg_cost_total"] = fg_cost.reindex(fg_rets.index).fillna(0.0).sum()
     n_years_fg = len(fg_rets) / 252
     out["fg_cost_annualized"] = out["fg_cost_total"] / n_years_fg if n_years_fg > 0 else np.nan
+
+    # 레짐 배분만 (오버레이 전혀 없음, 일별) — 기간 분석에서 "오버레이가 이 구간에서 도움이 됐는지" 비교용
+    no_crisis_state = pd.Series(False, index=crisis_state.index)
+    regime_only_weights = build_daily_weights(px.index, wf_alloc_log, no_crisis_state, fg_in_position=None)
+    regime_only_gross = portfolio_returns_from_weights(regime_only_weights, daily_rets)
+    regime_only_cost = compute_turnover_costs(regime_only_weights, one_way_cost_bps)
+    out["regime_only_rets"] = (regime_only_gross - regime_only_cost).dropna()
 
     bench_daily_6040 = 0.6 * daily_rets["SPY"] + 0.4 * daily_rets["IEF"]
     out["bench_daily_6040"] = bench_daily_6040
