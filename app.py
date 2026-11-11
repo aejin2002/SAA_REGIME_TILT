@@ -79,7 +79,7 @@ st.markdown(f"""
     box-shadow: 0 1px 3px rgba(18,42,82,0.06);
     height: 100%;
 }}
-.card-signal {{ min-height: 128px; box-sizing: border-box; }}
+.card-signal {{ min-height: 148px; box-sizing: border-box; }}
 .card-label {{ color: {MUTED}; font-size: 0.78rem; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; margin-bottom: 7px; }}
 .card-value {{ color: {NAVY}; font-size: 1.7rem; font-weight: 800; line-height: 1.15; }}
 .card-sub {{ color: {MUTED}; font-size: 0.8rem; margin-top: 5px; }}
@@ -229,6 +229,7 @@ with c4:
         <div class="card-label">간단 F&amp;G (KODEX200)</div>
         <div>{badge}</div>
         <div class="card-sub">{score_txt} · 기준일 {bt['sfg_data_asof'].date() if bt['sfg_data_asof'] is not None else '-'}</div>
+        <div class="card-sub">{bt['sfg_status_text']}</div>
     </div>""", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
