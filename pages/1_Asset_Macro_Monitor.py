@@ -52,11 +52,14 @@ st.markdown(f"""
 .axis-card {{ background: {WHITE}; border: 1px solid {BORDER}; border-radius: 12px; padding: 16px 20px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(18,42,82,0.06); }}
 .axis-title {{ color: {NAVY}; font-size: 1.05rem; font-weight: 700; margin-bottom: 8px; }}
 .axis-summary {{ color: {NAVY_SOFT}; font-size: 0.92rem; line-height: 1.5; }}
-.ind-row {{ border-bottom: 1px solid {BORDER}; padding: 10px 0; }}
-.ind-label {{ color: {NAVY}; font-weight: 700; font-size: 0.95rem; }}
-.ind-badge {{ font-size: 0.78rem; font-weight: 800; padding: 2px 9px; border-radius: 999px; color: {WHITE}; margin-left: 8px; }}
-.ind-sub {{ color: {MUTED}; font-size: 0.8rem; margin-top: 3px; }}
-.ind-unavail {{ color: {MUTED}; font-size: 0.85rem; font-style: italic; }}
+.ind-card {{ background: {WHITE}; border: 1px solid {BORDER}; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; min-height: 92px; }}
+.ind-card-head {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }}
+.ind-label {{ color: {NAVY}; font-weight: 700; font-size: 0.88rem; line-height: 1.25; }}
+.ind-badge {{ font-size: 0.72rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; color: {WHITE}; white-space: nowrap; margin-left: 6px; }}
+.ind-sub {{ color: {MUTED}; font-size: 0.76rem; margin-top: 2px; }}
+.ind-unavail {{ color: {MUTED}; font-size: 0.82rem; font-style: italic; margin-top: 2px; }}
+.ind-brief {{ color: {NAVY_SOFT}; font-size: 0.8rem; line-height: 1.45; margin-top: 6px; }}
+.ind-brief b {{ color: {NAVY}; }}
 .section-title {{ color: {NAVY}; font-size: 1.15rem; font-weight: 700; margin: 26px 0 10px 0; padding-bottom: 6px; border-bottom: 2px solid {NAVY}; }}
 .xref-card {{ background: {WHITE}; border: 1px solid {BORDER}; border-radius: 10px; padding: 12px 16px; margin-bottom: 10px; }}
 </style>
@@ -125,56 +128,77 @@ def fmt_chg(v, change_unit):
     return f"{v:+.1f}%"
 
 
-def render_indicator_row(key, context, show_assets=True):
+def _mini_chart(series_1y, key_id):
+    fig = go.Figure(go.Scatter(
+        x=series_1y.index, y=series_1y.values, mode="lines",
+        line=dict(color=NAVY, width=1.8), fill="tozeroy", fillcolor="rgba(18,42,82,0.06)",
+    ))
+    fig.update_layout(
+        height=110, margin=dict(l=2, r=2, t=2, b=2),
+        plot_bgcolor=WHITE, paper_bgcolor=WHITE, showlegend=False,
+        xaxis=dict(visible=False), yaxis=dict(visible=False),
+    )
+    st.plotly_chart(fig, use_container_width=True, key=key_id,
+                     config={"displayModeBar": False})
+
+
+def render_indicator_card(key, context):
+    """지표 1개를 카드로: 있으면 차트+현재값을 바로 보여주고, 없으면 그 자리에서 바로 브리핑."""
     ind = res.get(key)
     if ind is None:
         return
     label = ind["label"]
+
     if not ind["available"]:
         note = ind.get("data_note", "")
         st.markdown(f"""
-<div class="ind-row">
-  <span class="ind-label">{label}</span>
-  <span class="ind-badge" style="background:{MUTED}">데이터 미확보</span>
+<div class="ind-card">
+  <div class="ind-card-head"><span class="ind-label">{label}</span>
+     <span class="ind-badge" style="background:{MUTED}">데이터 미확보</span></div>
   <div class="ind-unavail">{note}</div>
+  <div class="ind-brief"><b>상승 시(일반 해석)</b> — {ind['rising']}</div>
+  <div class="ind-brief"><b>하락 시(일반 해석)</b> — {ind['falling']}</div>
 </div>""", unsafe_allow_html=True)
         return
 
     trend = ind["trend"]
     badge_color = TREND_COLOR.get(trend, MUTED)
-    assets_txt = " · ".join(strat.ASSET_LABELS.get(a, a) for a in ind.get("assets", [])) if show_assets else ""
-    with st.container():
-        st.markdown(f"""
-<div class="ind-row">
-  <span class="ind-label">{label}</span>
-  <span class="ind-badge" style="background:{badge_color}">{TREND_LABEL[trend]}</span>
-  <div class="ind-sub">현재 {fmt_val(ind['latest'], ind['unit'])} (관측일 {ind['data_date'].date()}) ·
+    assets_txt = " · ".join(strat.ASSET_LABELS.get(a, a) for a in ind.get("assets", []))
+    st.markdown(f"""
+<div class="ind-card">
+  <div class="ind-card-head"><span class="ind-label">{label}</span>
+     <span class="ind-badge" style="background:{badge_color}">{TREND_LABEL[trend]}</span></div>
+  <div class="ind-sub">현재 {fmt_val(ind['latest'], ind['unit'])} ({ind['data_date'].date()}) ·
      1M {fmt_chg(ind['chg_1m'], ind['change_unit'])} · 3M {fmt_chg(ind['chg_3m'], ind['change_unit'])} ·
      6M {fmt_chg(ind['chg_6m'], ind['change_unit'])}</div>
-  {f'<div class="ind-sub">관련 자산: {assets_txt}</div>' if assets_txt else ''}
 </div>""", unsafe_allow_html=True)
-        with st.expander(f"{label} — 상승/하락 의미 및 1년 추이", key=f"exp_{context}_{key}"):
-            cur_dir = "rising" if trend in ("Rising", "Accelerating") else ("falling" if trend == "Falling" else None)
-            c1, c2 = st.columns(2)
-            with c1:
-                mark = " ◀ 현재 방향" if cur_dir == "rising" else ""
-                st.markdown(f"**상승 시**{mark}")
-                st.write(ind["rising"])
-            with c2:
-                mark = " ◀ 현재 방향" if cur_dir == "falling" else ""
-                st.markdown(f"**하락 시**{mark}")
-                st.write(ind["falling"])
-            if ind.get("data_note"):
-                st.caption(f"ℹ️ {ind['data_note']}")
-            full_series = ind["series"]
-            cutoff = full_series.index[-1] - pd.Timedelta(days=365)
-            series_1y = full_series.loc[full_series.index >= cutoff]
-            fig = go.Figure(go.Scatter(x=series_1y.index, y=series_1y.values, line=dict(color=NAVY, width=1.8)))
-            fig.update_layout(height=180, margin=dict(l=10, r=10, t=10, b=10),
-                               plot_bgcolor=WHITE, paper_bgcolor=WHITE,
-                               font=dict(color=NAVY, size=11),
-                               xaxis=dict(gridcolor=BORDER), yaxis=dict(gridcolor=BORDER))
-            st.plotly_chart(fig, use_container_width=True, key=f"chart_{context}_{key}")
+    full_series = ind["series"]
+    cutoff = full_series.index[-1] - pd.Timedelta(days=365)
+    series_1y = full_series.loc[full_series.index >= cutoff]
+    _mini_chart(series_1y, key_id=f"chart_{context}_{key}")
+    if assets_txt:
+        st.caption(f"관련 자산: {assets_txt}")
+    with st.expander(f"{label} — 상승/하락 경제적 의미", key=f"exp_{context}_{key}"):
+        cur_dir = "rising" if trend in ("Rising", "Accelerating") else ("falling" if trend == "Falling" else None)
+        c1, c2 = st.columns(2)
+        with c1:
+            mark = " ◀ 현재 방향" if cur_dir == "rising" else ""
+            st.markdown(f"**상승 시**{mark}")
+            st.write(ind["rising"])
+        with c2:
+            mark = " ◀ 현재 방향" if cur_dir == "falling" else ""
+            st.markdown(f"**하락 시**{mark}")
+            st.write(ind["falling"])
+        if ind.get("data_note"):
+            st.caption(f"ℹ️ {ind['data_note']}")
+
+
+def render_indicator_grid(keys, context, n_cols=3):
+    """지표 여러 개를 한 화면에서 그래프까지 한눈에 — 카드 그리드로 배치."""
+    cols = st.columns(n_cols)
+    for i, key in enumerate(keys):
+        with cols[i % n_cols]:
+            render_indicator_card(key, context)
 
 
 # ------------------------------------------------------------------
@@ -197,9 +221,7 @@ for axis in mm.AXIS_ORDER:
   <div class="axis-title">{mm.AXIS_LABELS[axis]}</div>
   <div class="axis-summary">{summary}</div>
 </div>""", unsafe_allow_html=True)
-    with st.expander(f"{mm.AXIS_LABELS[axis]} 세부 지표 보기"):
-        for key in AXIS_KEYS[axis]:
-            render_indicator_row(key, context=f"axis_{axis}")
+    render_indicator_grid(AXIS_KEYS[axis], context=f"axis_{axis}")
 
 # ------------------------------------------------------------------
 # B. Asset-specific Dashboard
@@ -211,8 +233,7 @@ for asset_key, label in mm.ASSET_LABELS.items():
     with st.expander(label):
         n_asset_avail = sum(1 for k in mm.ASSET_PANEL_KEYS[asset_key] if res.get(k, {}).get("available"))
         st.caption(f"{len(mm.ASSET_PANEL_KEYS[asset_key])}개 지표 중 {n_asset_avail}개 실시간 연동")
-        for key in mm.ASSET_PANEL_KEYS[asset_key]:
-            render_indicator_row(key, context=f"asset_{asset_key}")
+        render_indicator_grid(mm.ASSET_PANEL_KEYS[asset_key], context=f"asset_{asset_key}")
 
 # ------------------------------------------------------------------
 # C. Crisis Overlay 연계
