@@ -7,11 +7,41 @@ FRED에서 확보 가능한 지표만 실제로 받아오고, 확보 불가능�
 같이 들고 있어서, 단순 등락색 표시가 아니라 해석을 보여준다.
 """
 from datetime import date
+from io import BytesIO
 
 import numpy as np
 import pandas as pd
+import requests
 
 import strategy as strat
+
+GDPNOW_XLSX_URL = ("https://www.atlantafed.org/-/media/Project/Atlanta/FRBA/Documents/"
+                    "research-and-data/data/gdpnow/GDPTrackingModelDataAndForecasts.xlsx")
+
+
+def fetch_sox():
+    """SOX(필라델피아 반도체지수)를 야후파이낸스 ^SOX 티커로 직접 받아옴(FRED엔 없음)."""
+    px = strat.try_download_yfinance(["^SOX"], "1990-01-01", date.today().isoformat())
+    if px is None:
+        return None
+    s = px["^SOX"] if isinstance(px, pd.DataFrame) else px
+    return s.dropna()
+
+
+def fetch_gdpnow():
+    """Atlanta Fed가 공식 공개하는 GDPNow 원본 데이터 파일(엑셀)에서 헤드라인 나우캐스트 값을 추출.
+    공식 1차 데이터 소스를 그대로 받아오는 것이며, 별도 유료 API나 비공식 스크래핑이 아님."""
+    try:
+        r = requests.get(GDPNOW_XLSX_URL, timeout=30)
+        if r.status_code != 200:
+            return None
+        xl = pd.ExcelFile(BytesIO(r.content))
+        df = xl.parse("TrackingArchives", usecols=["Forecast Date", "GDP Nowcast"])
+        df = df.dropna(subset=["GDP Nowcast"]).sort_values("Forecast Date")
+        s = pd.Series(df["GDP Nowcast"].values, index=pd.to_datetime(df["Forecast Date"]))
+        return s[~s.index.duplicated(keep="last")]
+    except Exception:
+        return None
 
 # ------------------------------------------------------------------
 # 지표 레지스트리
@@ -39,11 +69,11 @@ IND = {
         rising="50을 넘으면 서비스업 확장. 미국 GDP의 70%+가 서비스업이라 이 지표의 가중치가 큼.",
         falling="50을 밑돌면 서비스업 수축. 제조업보다 서비스업 둔화가 실제 소비경기 둔화에 더 가까운 신호.",
         data_note="ISM 제조업 PMI와 동일한 사유로 FRED 무료 API 미제공."),
-    "GDPNOW": dict(label="Atlanta Fed GDPNow (실시간 GDP 나우캐스트)", axis="growth", fred=None, freq="D", transform="level",
+    "GDPNOW": dict(label="Atlanta Fed GDPNow (실시간 GDP 나우캐스트)", axis="growth", fred=None, freq="D", transform="gdpnow_level",
         unit="%", change_unit="pt", assets=[],
-        rising="나우캐스트 상향은 들어오는 데이터들이 예상보다 강하다는 의미.",
-        falling="나우캐스트 하향은 들어오는 데이터들이 예상보다 약하다는 의미.",
-        data_note="Atlanta Fed가 자체 웹사이트로만 공개하며 공개 API를 제공하지 않음 (atlantafed.org에서 수동 확인 필요)."),
+        rising="나우캐스트 상향은 들어오는 데이터들이 예상보다 강하다는 의미. 단, 분기 초반엔 데이터가 적어 변동성이 크고 분기 말로 갈수록 안정됨.",
+        falling="나우캐스트 하향은 들어오는 데이터들이 예상보다 약하다는 의미. 분기 초반 급변은 소수 데이터 발표에 따른 노이즈일 수 있음.",
+        data_note="Atlanta Fed가 공개하는 원본 데이터 파일(TrackingArchives)을 직접 받아 연동. 같은 분기 안에서 예측치가 매번 갱신되는 '진행형 예측'이라 분기가 바뀌는 시점엔 값이 불연속적으로 뛸 수 있음."),
 
     # ---------------- Inflation ----------------
     "CPI_CORE": dict(label="Core CPI (YoY)", axis="inflation", fred="CPILFESL", freq="M", transform="yoy",
@@ -182,11 +212,11 @@ IND = {
         rising="나스닥(성장주)이 S&P500 대비 아웃퍼폼 — growth/tech 로테이션 강화 국면.",
         falling="나스닥이 S&P500 대비 언더퍼폼 — value/대형주로의 로테이션 또는 성장주 밸류에이션 조정 국면.",
         data_note="자체 보유 중인 QQQ·SPY 가격으로 직접 계산한 비율(외부 소스 아님)."),
-    "SOX": dict(label="필라델피아 반도체지수 (SOX)", axis=None, fred=None, freq="D", transform="level",
+    "SOX": dict(label="필라델피아 반도체지수 (SOX)", axis=None, fred=None, freq="D", transform="sox_price",
         unit="pt", change_unit="pct", assets=["QQQ"],
         rising="반도체 업황 개선 기대 반영 — QQQ 내 비중이 큰 반도체주에 직접적 호재.",
         falling="반도체 업황 둔화 우려 반영 — QQQ에 부담.",
-        data_note="필라델피아거래소 독자 지수라 FRED에 없음. 야후파이낸스 등 별도 연동 필요(추후 확장 가능)."),
+        data_note="필라델피아거래소 독자 지수라 FRED엔 없지만, 야후파이낸스(^SOX)로 직접 연동."),
     "FORWARD_PE": dict(label="S&P500 Forward P/E", axis=None, fred=None, freq="D", transform="level",
         unit="x", change_unit="pct", assets=["SPY"],
         rising="밸류에이션 부담 확대 — 향후 이익 기대 대비 주가가 비싸지고 있다는 의미.",
@@ -353,6 +383,10 @@ def _build_series(ind_key, ind, market_data, raw_cache):
             return None
         ret = px["TLT"].pct_change()
         return (ret.rolling(20).std() * np.sqrt(252) * 100).dropna()
+    if transform == "sox_price":
+        return fetch_sox()
+    if transform == "gdpnow_level":
+        return fetch_gdpnow()
     fred_id = ind.get("fred")
     if not fred_id:
         return None
@@ -401,13 +435,14 @@ def compute_indicator(ind_key, market_data, raw_cache):
     latest = series.iloc[-1]
     data_date = series.index[-1]
     prev = series.iloc[-2] if len(series) >= 2 else np.nan
+    prev_date = series.index[-2] if len(series) >= 2 else None
 
     def _at_offset(months):
         target = data_date - pd.DateOffset(months=months)
         sub = series.loc[:target]
         return sub.iloc[-1] if len(sub) else np.nan
 
-    v1m, v3m, v6m = _at_offset(1), _at_offset(3), _at_offset(6)
+    v1m, v3m, v6m, v12m = _at_offset(1), _at_offset(3), _at_offset(6), _at_offset(12)
     change_unit = ind["change_unit"]
 
     def _chg(a, b):
@@ -422,13 +457,14 @@ def compute_indicator(ind_key, market_data, raw_cache):
         return (a / b - 1) * 100
 
     chg_1m, chg_3m, chg_6m = _chg(latest, v1m), _chg(latest, v3m), _chg(latest, v6m)
+    chg_12m = _chg(latest, v12m)
     eps = EPS_BY_UNIT.get(change_unit, 0.3)
     trend = classify_trend(chg_1m, chg_3m, chg_6m, eps)
 
     return {
         "key": ind_key, **ind, "available": True,
-        "series": series, "latest": latest, "prev": prev, "data_date": data_date,
-        "chg_1m": chg_1m, "chg_3m": chg_3m, "chg_6m": chg_6m, "trend": trend,
+        "series": series, "latest": latest, "prev": prev, "prev_date": prev_date, "data_date": data_date,
+        "chg_1m": chg_1m, "chg_3m": chg_3m, "chg_6m": chg_6m, "chg_12m": chg_12m, "trend": trend,
     }
 
 

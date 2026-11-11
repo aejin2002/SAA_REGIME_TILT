@@ -52,7 +52,8 @@ st.markdown(f"""
 .axis-card {{ background: {WHITE}; border: 1px solid {BORDER}; border-radius: 12px; padding: 16px 20px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(18,42,82,0.06); }}
 .axis-title {{ color: {NAVY}; font-size: 1.05rem; font-weight: 700; margin-bottom: 8px; }}
 .axis-summary {{ color: {NAVY_SOFT}; font-size: 0.92rem; line-height: 1.5; }}
-.ind-card {{ background: {WHITE}; border: 1px solid {BORDER}; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; min-height: 92px; }}
+.ind-card {{ background: {WHITE}; border: 1px solid {BORDER}; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; min-height: 92px; }}
+.ind-value-big {{ color: {NAVY}; font-size: 1.5rem; font-weight: 800; margin-top: 4px; }}
 .ind-card-head {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }}
 .ind-label {{ color: {NAVY}; font-weight: 700; font-size: 0.88rem; line-height: 1.25; }}
 .ind-badge {{ font-size: 0.72rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; color: {WHITE}; white-space: nowrap; margin-left: 6px; }}
@@ -128,22 +129,46 @@ def fmt_chg(v, change_unit):
     return f"{v:+.1f}%"
 
 
-def _mini_chart(series_1y, key_id):
+def _mini_chart(series_1y, key_id, unit):
+    """일별 지표용 — 등락이 실제로 보이도록 0 기준으로 채우지 않고 데이터 자체 범위로 자동 스케일,
+    축 눈금도 보이게 (전엔 fill=tozeroy + 축 숨김이라 금리·스프레드처럼 0 근처가 아닌 지표는
+    변동이 안 보였음)."""
     fig = go.Figure(go.Scatter(
         x=series_1y.index, y=series_1y.values, mode="lines",
-        line=dict(color=NAVY, width=1.8), fill="tozeroy", fillcolor="rgba(18,42,82,0.06)",
+        line=dict(color=NAVY, width=2),
     ))
+    y_suffix = "%" if unit == "%" else ("pt" if unit == "pt" else "")
     fig.update_layout(
-        height=110, margin=dict(l=2, r=2, t=2, b=2),
+        height=160, margin=dict(l=46, r=12, t=8, b=30),
         plot_bgcolor=WHITE, paper_bgcolor=WHITE, showlegend=False,
-        xaxis=dict(visible=False), yaxis=dict(visible=False),
+        xaxis=dict(gridcolor=BORDER, tickfont=dict(size=9, color=MUTED), nticks=5, showline=True, linecolor=BORDER),
+        yaxis=dict(gridcolor=BORDER, tickfont=dict(size=9, color=MUTED), ticksuffix=y_suffix,
+                    showline=True, linecolor=BORDER, autorange=True),
     )
     st.plotly_chart(fig, use_container_width=True, key=key_id,
                      config={"displayModeBar": False})
 
 
+def _interpretation_expander(ind, key, context, trend):
+    with st.expander(f"{ind['label']} — 상승/하락 경제적 의미", key=f"exp_{context}_{key}"):
+        cur_dir = "rising" if trend in ("Rising", "Accelerating") else ("falling" if trend == "Falling" else None)
+        c1, c2 = st.columns(2)
+        with c1:
+            mark = " ◀ 현재 방향" if cur_dir == "rising" else ""
+            st.markdown(f"**상승 시**{mark}")
+            st.write(ind["rising"])
+        with c2:
+            mark = " ◀ 현재 방향" if cur_dir == "falling" else ""
+            st.markdown(f"**하락 시**{mark}")
+            st.write(ind["falling"])
+        if ind.get("data_note"):
+            st.caption(f"ℹ️ {ind['data_note']}")
+
+
 def render_indicator_card(key, context):
-    """지표 1개를 카드로: 있으면 차트+현재값을 바로 보여주고, 없으면 그 자리에서 바로 브리핑."""
+    """지표 1개를 카드로. 일별 지표는 차트, 주/월/분기별 지표는 숫자(현재·직전·YoY)만 —
+    주기가 긴 지표는 포인트가 적어 억지로 그래프를 그리면 오히려 안 읽혀서 숫자 비교가 더 명확함.
+    데이터 미확보 지표는 그 자리에서 바로 상승/하락 해석을 브리핑."""
     ind = res.get(key)
     if ind is None:
         return
@@ -164,6 +189,25 @@ def render_indicator_card(key, context):
     trend = ind["trend"]
     badge_color = TREND_COLOR.get(trend, MUTED)
     assets_txt = " · ".join(strat.ASSET_LABELS.get(a, a) for a in ind.get("assets", []))
+
+    if ind["freq"] != "D":
+        prev_txt = (f"직전 {fmt_val(ind['prev'], ind['unit'])} ({ind['prev_date'].date()})"
+                    if pd.notna(ind["prev"]) and ind["prev_date"] is not None else "직전값 없음")
+        yoy_txt = fmt_chg(ind["chg_12m"], ind["change_unit"])
+        st.markdown(f"""
+<div class="ind-card">
+  <div class="ind-card-head"><span class="ind-label">{label}</span>
+     <span class="ind-badge" style="background:{badge_color}">{TREND_LABEL[trend]}</span></div>
+  <div class="ind-value-big">{fmt_val(ind['latest'], ind['unit'])}</div>
+  <div class="ind-sub">{prev_txt} · YoY {yoy_txt}</div>
+  <div class="ind-sub">1M {fmt_chg(ind['chg_1m'], ind['change_unit'])} ·
+     3M {fmt_chg(ind['chg_3m'], ind['change_unit'])} ·
+     6M {fmt_chg(ind['chg_6m'], ind['change_unit'])}</div>
+  {f'<div class="ind-sub">관련 자산: {assets_txt}</div>' if assets_txt else ''}
+</div>""", unsafe_allow_html=True)
+        _interpretation_expander(ind, key, context, trend)
+        return
+
     st.markdown(f"""
 <div class="ind-card">
   <div class="ind-card-head"><span class="ind-label">{label}</span>
@@ -175,27 +219,15 @@ def render_indicator_card(key, context):
     full_series = ind["series"]
     cutoff = full_series.index[-1] - pd.Timedelta(days=365)
     series_1y = full_series.loc[full_series.index >= cutoff]
-    _mini_chart(series_1y, key_id=f"chart_{context}_{key}")
+    _mini_chart(series_1y, key_id=f"chart_{context}_{key}", unit=ind["unit"])
     if assets_txt:
         st.caption(f"관련 자산: {assets_txt}")
-    with st.expander(f"{label} — 상승/하락 경제적 의미", key=f"exp_{context}_{key}"):
-        cur_dir = "rising" if trend in ("Rising", "Accelerating") else ("falling" if trend == "Falling" else None)
-        c1, c2 = st.columns(2)
-        with c1:
-            mark = " ◀ 현재 방향" if cur_dir == "rising" else ""
-            st.markdown(f"**상승 시**{mark}")
-            st.write(ind["rising"])
-        with c2:
-            mark = " ◀ 현재 방향" if cur_dir == "falling" else ""
-            st.markdown(f"**하락 시**{mark}")
-            st.write(ind["falling"])
-        if ind.get("data_note"):
-            st.caption(f"ℹ️ {ind['data_note']}")
+    _interpretation_expander(ind, key, context, trend)
 
 
 def render_indicator_grid(keys, context, n_cols=3):
     """지표 여러 개를 한 화면에서 그래프까지 한눈에 — 카드 그리드로 배치."""
-    cols = st.columns(n_cols)
+    cols = st.columns(n_cols, gap="medium")
     for i, key in enumerate(keys):
         with cols[i % n_cols]:
             render_indicator_card(key, context)
