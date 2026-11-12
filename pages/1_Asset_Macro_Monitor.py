@@ -233,6 +233,63 @@ def render_indicator_grid(keys, context, n_cols=3):
             render_indicator_card(key, context)
 
 
+def _asset_price_stats(series):
+    latest = series.iloc[-1]
+    data_date = series.index[-1]
+
+    def _at_offset(months):
+        target = data_date - pd.DateOffset(months=months)
+        sub = series.loc[:target]
+        return sub.iloc[-1] if len(sub) else np.nan
+
+    def _pct(a, b):
+        if pd.isna(a) or pd.isna(b) or b == 0:
+            return np.nan
+        return (a / b - 1) * 100
+
+    v1, v3, v6 = _at_offset(1), _at_offset(3), _at_offset(6)
+    c1, c3, c6 = _pct(latest, v1), _pct(latest, v3), _pct(latest, v6)
+    trend = mm.classify_trend(c1, c3, c6, mm.EPS_BY_UNIT["pct"])
+    return latest, data_date, c1, c3, c6, trend
+
+
+def render_asset_price_card(ticker):
+    px = market_data["px"]
+    if ticker not in px.columns:
+        return
+    series = px[ticker].dropna()
+    if len(series) < 3:
+        return
+    latest, data_date, c1, c3, c6, trend = _asset_price_stats(series)
+    badge_color = TREND_COLOR.get(trend, MUTED)
+    label = strat.ASSET_LABELS.get(ticker, ticker)
+    unit = "₩" if ticker == "069500.KS" else "$"
+    st.markdown(f"""
+<div class="ind-card">
+  <div class="ind-card-head"><span class="ind-label">{label}</span>
+     <span class="ind-badge" style="background:{badge_color}">{TREND_LABEL[trend]}</span></div>
+  <div class="ind-sub">현재 {fmt_val(latest, unit)} ({data_date.date()}) ·
+     1M {fmt_chg(c1, 'pct')} · 3M {fmt_chg(c3, 'pct')} · 6M {fmt_chg(c6, 'pct')}</div>
+</div>""", unsafe_allow_html=True)
+    cutoff = series.index[-1] - pd.Timedelta(days=365)
+    series_1y = series.loc[series.index >= cutoff]
+    _mini_chart(series_1y, key_id=f"chart_assetprice_{ticker}", unit=unit)
+
+
+def render_asset_price_grid(n_cols=3):
+    cols = st.columns(n_cols, gap="medium")
+    for i, ticker in enumerate(strat.ETF_UNIVERSE):
+        with cols[i % n_cols]:
+            render_asset_price_card(ticker)
+
+
+# ------------------------------------------------------------------
+# 보유 자산 가격 추이 (9개 자산군)
+# ------------------------------------------------------------------
+st.markdown('<div class="section-title">보유 자산 가격 추이</div>', unsafe_allow_html=True)
+st.caption("레짐 틸트 전략이 실제로 보유하는 9개 자산군의 가격 추이입니다.")
+render_asset_price_grid()
+
 # ------------------------------------------------------------------
 # A. Macro Regime Dashboard
 # ------------------------------------------------------------------
