@@ -405,17 +405,39 @@ def _build_series(ind_key, ind, market_data, raw_cache):
 
 
 def classify_trend(chg_1m, chg_3m, chg_6m, eps):
-    """1/3/6개월 변화로 Rising/Falling/Neutral/Accelerating/Reversing 분류."""
+    """1/3/6개월 변화로 Rising/Falling/Neutral/Accelerating/Reversing 분류.
+
+    최근 1개월 변화(recent)를, 그 이전 구간의 평균 월간 페이스(prior_pace)와 비교한다.
+    주의: prior_pace는 반드시 recent와 겹치지 않는 '이전' 구간만으로 계산해야 함 — 예전엔
+    (chg_3m / 3)을 그대로 썼는데 chg_3m 자체가 최근 1개월을 포함하고 있어서, 최근 1개월이
+    튀면 비교 기준(pace)까지 같이 튀어 Accelerating/Reversing이 엉뚱하게 뜨는 문제가 있었음.
+    """
     if pd.isna(chg_1m):
         return "Neutral"
-    pace_3m = chg_3m / 3 if pd.notna(chg_3m) else np.nan
-    if abs(chg_1m) < eps and (pd.isna(pace_3m) or abs(pace_3m) < eps):
+    recent = chg_1m
+    if pd.notna(chg_6m):
+        prior_pace = (chg_6m - chg_1m) / 5
+    elif pd.notna(chg_3m):
+        prior_pace = (chg_3m - chg_1m) / 2
+    else:
+        prior_pace = np.nan
+
+    recent_flat = abs(recent) < eps
+    prior_flat = pd.isna(prior_pace) or abs(prior_pace) < eps
+
+    if recent_flat and prior_flat:
         return "Neutral"
-    if pd.notna(pace_3m) and abs(pace_3m) >= eps and np.sign(chg_1m) != np.sign(pace_3m) and abs(chg_1m) >= eps:
+    if recent_flat and not prior_flat:
+        # 이번 기간은 거의 안 움직였지만 그 전엔 뚜렷한 흐름이 있었음 -> 그 흐름 유지로 표시
+        return "Rising" if prior_pace > 0 else "Falling"
+    if not recent_flat and prior_flat:
+        # 그동안 잠잠하다가 이번에 처음 움직이기 시작 -> 새 추세의 시작
+        return "Rising" if recent > 0 else "Falling"
+    if np.sign(recent) != np.sign(prior_pace):
         return "Reversing"
-    if pd.notna(pace_3m) and abs(pace_3m) >= eps and np.sign(chg_1m) == np.sign(pace_3m) and abs(chg_1m) > abs(pace_3m) * 1.4:
+    if abs(recent) > abs(prior_pace) * 1.6:
         return "Accelerating"
-    return "Rising" if chg_1m > 0 else "Falling"
+    return "Rising" if recent > 0 else "Falling"
 
 
 TREND_KO = {
