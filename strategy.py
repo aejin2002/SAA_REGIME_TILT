@@ -89,6 +89,7 @@ SFG_MOM_DAYS = 20
 SFG_ENTRY = 30
 SFG_HOLD = 60
 FG_OFF_PROXY = "SPY"
+ALLW_TICKER = "ALLW"
 
 # KRX 공식 공공데이터 API — VKOSPI(코스피200 변동성지수) 일별 수집용 (역시 환경변수로 주입)
 FG_KRX_AUTH_KEY = os.environ.get("FG_KRX_AUTH_KEY", "")
@@ -537,6 +538,11 @@ def fetch_market_data(vkospi_csv_path, end=None):
         raise RuntimeError("yfinance ETF 가격 로딩 실패 (네트워크 확인 필요)")
     px = px[all_tickers].dropna(how="all").ffill().dropna()
 
+    # ALLW(SPDR Bridgewater All Weather ETF)는 2025-03 상장이라 메인 유니버스에 넣으면 dropna()로
+    # 백테스트 전체가 잘리므로 별도로 받아서 비교용 벤치마크로만 쓴다.
+    allw = try_download_yfinance([ALLW_TICKER], START, end)
+    allw_px = allw[ALLW_TICKER].dropna() if allw is not None and ALLW_TICKER in allw else pd.Series(dtype=float)
+
     vix_raw = try_fetch_fred("VIXCLS", START, end)
     if vix_raw is None:
         raise RuntimeError("VIXCLS 로딩 실패")
@@ -560,7 +566,7 @@ def fetch_market_data(vkospi_csv_path, end=None):
         indpro_raw=indpro_raw, cpi_raw=cpi_raw, usrec_raw=usrec_raw,
         indpro_vintage=indpro_vintage, cpi_vintage=cpi_vintage,
         growth_is_vintage=indpro_vintage is not None, inflation_is_vintage=cpi_vintage is not None,
-        px=px, price_data_asof=px.index[-1], daily_rets=px.pct_change(),
+        px=px, price_data_asof=px.index[-1], daily_rets=px.pct_change(), allw_px=allw_px,
         vix_d=vix_d, vix_ma20=vix_d.rolling(20).mean(),
         spy_5d=px["SPY"].pct_change(5), hyg_5d=px["HYG"].pct_change(5),
         fg_ok=fg_ok, vkospi_added_days=vk_added,
@@ -720,6 +726,14 @@ def build_backtest(data, one_way_cost_bps=DEFAULT_ONE_WAY_COST_BPS):
 
     bench_daily_6040 = 0.6 * daily_rets["SPY"] + 0.4 * daily_rets["IEF"]
     out["bench_daily_6040"] = bench_daily_6040
+
+    # ALLW: 상장일 이전은 NaN (상장 이후 구간에서만 비교)
+    allw_px = data.get("allw_px", pd.Series(dtype=float))
+    if len(allw_px):
+        allw_aligned = allw_px.reindex(fg_rets.index.union(allw_px.index)).ffill().reindex(fg_rets.index)
+        out["allw_rets"] = allw_aligned.pct_change().loc[allw_px.index[0]:].reindex(fg_rets.index)
+    else:
+        out["allw_rets"] = pd.Series(dtype=float)
 
     # 레짐별 배분표 + 오늘 기준 신호
     out["allocations_by_regime"] = {r: build_tilt_allocation(r) for r in REGIME_EQUITY_TARGET}

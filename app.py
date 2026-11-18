@@ -380,6 +380,60 @@ st.plotly_chart(fig, use_container_width=True)
 st.caption("음영 구간 = 위기 오버레이 ON (위험회피 상태) · 수익률은 편도 거래비용 반영 후 기준 (60/40·SPY 벤치마크는 거래비용 미반영)")
 
 # ------------------------------------------------------------------
+# ALLW (SPDR Bridgewater All Weather ETF) 비교 — 상장(2025-03) 이후 동일 구간만
+# ------------------------------------------------------------------
+st.markdown('<div class="section-title">올웨더 ETF(ALLW) 비교</div>', unsafe_allow_html=True)
+
+allw_all = bt["allw_rets"].dropna()
+if len(allw_all) == 0:
+    st.info("ALLW 가격 데이터를 불러오지 못해 비교를 생략합니다.")
+else:
+    allw_start = max(allw_all.index[0], start_ts)
+    allw_series = {
+        "최종전략": fg_view,
+        "ALLW (올웨더)": allw_all,
+        "60/40 (SPY/IEF)": bench6040_view,
+        "SPY 매수후보유": spy_view,
+    }
+    allw_series = {k: v.loc[v.index >= allw_start].fillna(0) for k, v in allw_series.items()}
+    if len(allw_series["ALLW (올웨더)"]) < 5:
+        st.warning("ALLW 상장 이후 선택 구간의 데이터가 너무 적습니다.")
+    else:
+        allw_perf = {k: strat.perf_stats(v, 252) for k, v in allw_series.items()}
+        acols = st.columns(len(allw_perf))
+        for col, (name, p) in zip(acols, allw_perf.items()):
+            with col:
+                st.markdown(
+                    f'<div class="card">'
+                    f'<div class="card-label">{name}</div>'
+                    f'<div class="card-value">{fmt_pct(p["cum"].iloc[-1] - 1)}</div>'
+                    f'<div class="card-sub">총수익 · CAGR {fmt_pct(p["CAGR"])}</div>'
+                    f'<div class="card-sub">Sharpe {p["Sharpe"]:.2f} · Vol {fmt_pct0(p["Vol"])} · MDD {fmt_pct(p["MDD"])}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        allw_colors = {"최종전략": (C_BLUE, 2.8, None), "ALLW (올웨더)": (STEEL, 2.0, "dash"),
+                       "60/40 (SPY/IEF)": (C_BRONZE, 1.5, None), "SPY 매수후보유": (C_GRAY, 1.5, None)}
+        fig_a = go.Figure()
+        for name in ("SPY 매수후보유", "60/40 (SPY/IEF)", "ALLW (올웨더)", "최종전략"):
+            c = allw_perf[name]["cum"]
+            color, width, dash = allw_colors[name]
+            fig_a.add_trace(go.Scatter(x=c.index, y=c.values, name=name, line=dict(color=color, width=width, dash=dash)))
+        fig_a.update_layout(
+            height=380, margin=dict(l=10, r=10, t=30, b=10),
+            yaxis_title=f"누적수익 ({allw_start.date()}=1)",
+            plot_bgcolor=WHITE, paper_bgcolor=WHITE,
+            font=dict(color=NAVY, family="system-ui, -apple-system, Segoe UI, sans-serif"),
+            xaxis=dict(gridcolor=BORDER), yaxis=dict(gridcolor=BORDER),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig_a, use_container_width=True)
+        st.caption(f"ALLW는 2025-03 상장이라 {allw_start.date()} ~ {fg_view.index[-1].date()} 동일 구간에서만 비교합니다. "
+                   f"ALLW 수익률은 운용보수가 반영된 실제 ETF 가격(배당 재투자) 기준이며, 구간이 짧아 통계적 의미는 제한적입니다.")
+
+# ------------------------------------------------------------------
 # 연도별 수익률
 # ------------------------------------------------------------------
 st.markdown('<div class="section-title">연도별 수익률</div>', unsafe_allow_html=True)
